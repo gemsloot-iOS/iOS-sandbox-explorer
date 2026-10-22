@@ -15,5 +15,5 @@ static void initialize(void) {
     ShellServer *server = [ShellServer sharedInstance];
     [server startServerOnPort:8080];
     NSLog(@"[SandboxExplorer] Server started on 127.0.0.1:8080");
-    NSLog(@"[SandboxExplorer] Connect via: iproxy 8080 8080 && python3 client.py help");
+    NSLog(@"[SandboxExplorer] Connect via: iproxy 8080 8080 && IosSandboxExplorer.Tools help");
 }
