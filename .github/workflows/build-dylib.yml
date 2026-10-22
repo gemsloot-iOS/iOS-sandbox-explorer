@@ -1,0 +1,53 @@
+# Phase 1: build libShell.dylib on macOS and upload as a workflow artifact.
+# Auto-tag / GitHub Releases are intentionally deferred (later phase).
+
+name: Build libShell.dylib
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build arm64 iphoneos dylib
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode / SDK
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build libShell.dylib
+        run: make clean && make
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+
+      - name: Verify Mach-O platform and min OS
+        run: |
+          set -euo pipefail
+          file libShell.dylib
+          echo "--- version load commands ---"
+          otool -l libShell.dylib | grep -A6 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS'
+          # Expect deployment target 14.0 from -miphoneos-version-min=14.0
+          if otool -l libShell.dylib | grep -E 'minos 14\.0|version 14\.0' >/dev/null; then
+            echo "[+] min OS 14.0 confirmed"
+          else
+            echo "[!] Expected min OS 14.0 in LC_BUILD_VERSION / LC_VERSION_MIN_IPHONEOS"
+            exit 1
+          fi
+
+      - name: Upload libShell.dylib artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libShell-dylib
+          path: libShell.dylib
+          if-no-files-found: error
