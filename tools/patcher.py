@@ -3,16 +3,16 @@
 iOS IPA Patcher — Cross-platform tool for injecting dylib into iOS apps.
 
 Works on Windows, Linux, and macOS without Xcode.
-Requires: Python 3.8+, lief, pymobiledevice3 (optional, for install)
+Requires: Python 3.8+, lief (optional), pymobiledevice3 (optional, for install).
+
+IPA signing is intentionally out of scope — use an external signer
+(feather, ipasigner.com, Sideloadly, zsign, etc.) after patching.
 
 Usage:
-    python3 patcher.py patch       --ipa MyApp.ipa --dylib libShell.dylib [--output patched.ipa]
-    python3 patcher.py sign         --ipa patched.ipa --p12 cert.p12 --mobileprovision profile.mobileprovision
-    python3 patcher.py sign         --ipa patched.ipa --apple-id user@example.com
-    python3 patcher.py sign-apple   --ipa patched.ipa [--udid ...] [--skip-sign]
-    python3 patcher.py install      --ipa patched.ipa
+    python3 patcher.py patch    --ipa MyApp.ipa --dylib libShell.dylib [--output patched.ipa]
+    python3 patcher.py install  --ipa patched.ipa
     python3 patcher.py devices
-    python3 patcher.py full         --ipa MyApp.ipa --dylib libShell.dylib [--apple-id ...] [--skip-sign]
+    python3 patcher.py full     --ipa MyApp.ipa --dylib libShell.dylib [--install]
 """
 
 import argparse
@@ -367,76 +367,6 @@ class IPAHandler:
 
 # ─── Code Signing (optional, via zsign or ldid) ──────────────────────────────
 
-class CodeSigner:
-    """
-    Cross-platform code signing.
-    Supports:
-      - zsign (recommended, works on all platforms)
-      - ldid  (for fakesigning / jailbreak)
-    """
-
-    @staticmethod
-    def find_signer() -> Optional[str]:
-        """Find available signing tool."""
-        for tool in ('zsign', 'ldid'):
-            if shutil.which(tool):
-                return tool
-        return None
-
-    @staticmethod
-    def sign_with_zsign(ipa_path: str, output_path: str,
-                        p12_path: str = None, p12_password: str = "",
-                        mobileprovision_path: str = None,
-                        entitlements_path: str = None) -> bool:
-        """Sign IPA using zsign."""
-
-        cmd = ['zsign']
-
-        if p12_path:
-            cmd.extend(['-k', p12_path])
-            if p12_password:
-                cmd.extend(['-p', p12_password])
-
-        if mobileprovision_path:
-            cmd.extend(['-m', mobileprovision_path])
-
-        if entitlements_path:
-            cmd.extend(['-e', entitlements_path])
-
-        cmd.extend(['-o', output_path, ipa_path])
-
-        print(f"[*] Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode == 0:
-            print(f"[+] Signed IPA: {output_path}")
-            return True
-        else:
-            print(f"[!] zsign failed: {result.stderr}")
-            return False
-
-    @staticmethod
-    def sign_with_ldid(binary_path: str, entitlements_path: str = None) -> bool:
-        """Fakesign binary using ldid (for jailbreak or subsequent re-signing)."""
-
-        cmd = ['ldid']
-        if entitlements_path:
-            cmd.append(f'-S{entitlements_path}')
-        else:
-            cmd.append('-S')
-        cmd.append(binary_path)
-
-        print(f"[*] Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode == 0:
-            print(f"[+] Fakesigned: {binary_path}")
-            return True
-        else:
-            print(f"[!] ldid failed: {result.stderr}")
-            return False
-
-
 # ─── Device Installation (via pymobiledevice3) ───────────────────────────────
 
 class DeviceManager:
@@ -533,97 +463,11 @@ def cmd_patch(args):
         print("[+] PATCHED IPA READY (unsigned)")
         print(f"    Output: {output}")
         print()
-        print("    Next steps:")
-        print("    1. Install with Sideloadly (handles signing automatically)")
-        print("       → Open Sideloadly, select the patched IPA, connect device")
-        print()
-        print("    2. OR sign manually:")
-        print(f"       python3 {sys.argv[0]} sign --ipa {output} --p12 cert.p12 --mobileprovision profile.mobileprovision")
+        print("    Sign externally (feather / ipasigner / Sideloadly / zsign), then install.")
         print("=" * 60)
 
     finally:
         ipa.cleanup()
-
-
-def cmd_sign(args):
-    """Sign a patched IPA."""
-
-    # ── Apple ID signing ──
-    apple_id = getattr(args, 'apple_id', None)
-    skip_sign = getattr(args, 'skip_sign', False)
-
-    if skip_sign:
-        print("[*] Signing skipped (--skip-sign)")
-        print(f"[*] Use Sideloadly to install unsigned IPA: {args.ipa}")
-        return
-
-    if apple_id:
-        try:
-            from apple_account import sign_ipa_with_apple_id
-        except ImportError:
-            sys.path.insert(0, str(Path(__file__).parent))
-            from apple_account import sign_ipa_with_apple_id
-
-        output = args.output or args.ipa.replace('.ipa', '_signed.ipa')
-        anisette_url = getattr(args, 'anisette_url', 'http://localhost:6969')
-        udid = getattr(args, 'udid', None)
-
-        sign_ipa_with_apple_id(
-            ipa_path=args.ipa,
-            output_path=output,
-            udid=udid,
-            anisette_url=anisette_url,
-            apple_id=apple_id,
-        )
-        return
-
-    # ── Certificate-based signing (p12 / ldid) ──
-    signer = CodeSigner.find_signer()
-
-    if args.p12:
-        # Sign with zsign + certificate
-        if not shutil.which('zsign'):
-            print("[!] zsign not found. Install it:")
-            print("    git clone https://github.com/nicetransistor/zSign.git && cd zSign && make")
-            print("    Or download from releases.")
-            return
-
-        output = args.output or args.ipa.replace('.ipa', '_signed.ipa')
-        CodeSigner.sign_with_zsign(
-            ipa_path=args.ipa,
-            output_path=output,
-            p12_path=args.p12,
-            p12_password=args.p12_password or "",
-            mobileprovision_path=args.mobileprovision,
-            entitlements_path=args.entitlements,
-        )
-    elif signer == 'ldid':
-        print("[*] Using ldid for fakesigning (jailbreak only)")
-        ipa = IPAHandler(args.ipa)
-        try:
-            ipa.unpack()
-            ent_path = ipa.create_entitlements()
-            CodeSigner.sign_with_ldid(str(ipa.binary_path), ent_path)
-
-            # Also sign dylib if present
-            frameworks = ipa.app_bundle / 'Frameworks'
-            if frameworks.exists():
-                for dylib in frameworks.glob('*.dylib'):
-                    CodeSigner.sign_with_ldid(str(dylib))
-
-            output = args.output or args.ipa.replace('.ipa', '_signed.ipa')
-            ipa.repack(output)
-        finally:
-            ipa.cleanup()
-    else:
-        print("[!] No signing method available.")
-        print()
-        print("    Option 1: Sign with Apple ID (free, cross-platform):")
-        print(f"      python3 {sys.argv[0]} sign --ipa {args.ipa} --apple-id your@email.com")
-        print()
-        print("    Option 2: Use Sideloadly (handles signing automatically)")
-        print("    Option 3: Install zsign + provide .p12 + .mobileprovision")
-        print("    Option 4: Install ldid for fakesigning (jailbreak)")
 
 
 def cmd_install(args):
@@ -641,84 +485,22 @@ def cmd_tunnel(args):
     DeviceManager.start_tunnel(args.local_port, args.remote_port)
 
 
-def cmd_sign_apple(args):
-    """Sign IPA using Apple ID (interactive)."""
-    try:
-        from apple_account import sign_ipa_with_apple_id
-    except ImportError:
-        sys.path.insert(0, str(Path(__file__).parent))
-        from apple_account import sign_ipa_with_apple_id
-
-    output = args.output or args.ipa.replace('.ipa', '_signed.ipa')
-    sign_ipa_with_apple_id(
-        ipa_path=args.ipa,
-        output_path=output,
-        udid=args.udid,
-        bundle_id=args.bundle_id,
-        anisette_url=args.anisette_url,
-        skip_sign=args.skip_sign,
-    )
-
-
 def cmd_full(args):
-    """Full pipeline: patch → sign (optional) → install."""
+    """Patch IPA, then optionally install (signing is external)."""
     ipa = IPAHandler(args.ipa)
 
     try:
         ipa.unpack()
         ipa.inject_dylib(args.dylib, use_lief=args.use_lief)
         ipa.patch_plist()
-        ent_path = ipa.create_entitlements()
+        ipa.create_entitlements()
 
         output = args.output or args.ipa.replace('.ipa', '_patched.ipa')
         ipa.repack(output)
 
-        skip_sign = getattr(args, 'skip_sign', False)
-        apple_id = getattr(args, 'apple_id', None)
+        print()
+        print("[*] IPA is unsigned — sign with an external tool before device install.")
 
-        if skip_sign:
-            print("[*] Signing skipped (--skip-sign)")
-            print(f"[*] Use Sideloadly to install: {output}")
-        elif apple_id:
-            # Sign with Apple ID
-            try:
-                from apple_account import sign_ipa_with_apple_id
-            except ImportError:
-                sys.path.insert(0, str(Path(__file__).parent))
-                from apple_account import sign_ipa_with_apple_id
-
-            anisette_url = getattr(args, 'anisette_url', 'http://localhost:6969')
-            udid = getattr(args, 'udid', None)
-            signed_output = output.replace('.ipa', '_signed.ipa')
-            result = sign_ipa_with_apple_id(
-                ipa_path=output,
-                output_path=signed_output,
-                udid=udid,
-                anisette_url=anisette_url,
-                apple_id=apple_id,
-            )
-            if result:
-                output = signed_output
-        elif args.p12:
-            # Sign with certificate
-            signed_output = output.replace('.ipa', '_signed.ipa')
-            CodeSigner.sign_with_zsign(
-                ipa_path=output,
-                output_path=signed_output,
-                p12_path=args.p12,
-                p12_password=args.p12_password or "",
-                mobileprovision_path=args.mobileprovision,
-                entitlements_path=ent_path,
-            )
-            output = signed_output
-        else:
-            print()
-            print("[!] No signing method specified. IPA is unsigned.")
-            print("    Add --apple-id <email> to sign with a free Apple ID,")
-            print("    or --p12 <cert.p12> -m <profile.mobileprovision> for manual signing,")
-            print("    or --skip-sign to suppress this warning.")
-
-        # Install if requested
         if getattr(args, 'install', False):
             udid = getattr(args, 'udid', None)
             DeviceManager.install_ipa(output, udid=udid)
@@ -737,30 +519,15 @@ def cmd_full(args):
 def build_parser():
     parser = argparse.ArgumentParser(
         prog='patcher',
-        description='iOS IPA Patcher — Cross-platform dylib injection tool',
+        description='iOS IPA Patcher — Cross-platform dylib injection tool (signing is external)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Patch IPA (then install via Sideloadly)
+  # Patch IPA (then sign externally)
   python3 patcher.py patch --ipa MyApp.ipa --dylib libShell.dylib
 
-  # Sign with Apple ID (free, cross-platform)
-  python3 patcher.py sign --ipa MyApp_patched.ipa --apple-id user@example.com
-
-  # Sign with Apple ID (dedicated command, more options)
-  python3 patcher.py sign-apple --ipa MyApp_patched.ipa --udid 00008030-...
-
-  # Skip signing (paranoid mode — use Sideloadly instead)
-  python3 patcher.py sign-apple --ipa MyApp_patched.ipa --skip-sign
-
-  # Sign with .p12 certificate
-  python3 patcher.py sign --ipa MyApp_patched.ipa --p12 cert.p12 -m profile.mobileprovision
-
-  # Full pipeline: patch + sign with Apple ID + install
-  python3 patcher.py full --ipa MyApp.ipa --dylib libShell.dylib --apple-id user@example.com --install
-
-  # Full pipeline: patch only, skip signing
-  python3 patcher.py full --ipa MyApp.ipa --dylib libShell.dylib --skip-sign
+  # Patch + optional install (IPA remains unsigned unless you signed it first)
+  python3 patcher.py full --ipa MyApp.ipa --dylib libShell.dylib --install
 
   # List connected devices
   python3 patcher.py devices
@@ -776,31 +543,6 @@ Examples:
     p_patch.add_argument('--output', '-o', help='Output IPA path (default: <name>_patched.ipa)')
     p_patch.add_argument('--use-lief', action='store_true', help='Use lief library for injection (handles edge cases better)')
     p_patch.set_defaults(func=cmd_patch)
-
-    # ── sign ──
-    p_sign = subparsers.add_parser('sign', help='Sign IPA (Apple ID / zsign / ldid)')
-    p_sign.add_argument('--ipa', required=True, help='Path to IPA to sign')
-    p_sign.add_argument('--apple-id', help='Apple ID email (free signing via Apple servers)')
-    p_sign.add_argument('--p12', help='Path to .p12 certificate file')
-    p_sign.add_argument('--p12-password', help='Password for .p12 file')
-    p_sign.add_argument('--mobileprovision', '-m', help='Path to .mobileprovision file')
-    p_sign.add_argument('--entitlements', '-e', help='Path to entitlements.plist')
-    p_sign.add_argument('--udid', help='Device UDID (auto-detected if connected)')
-    p_sign.add_argument('--anisette-url', default='http://localhost:6969', help='Anisette server URL (default: localhost:6969)')
-    p_sign.add_argument('--skip-sign', action='store_true', help='Skip signing (use Sideloadly instead)')
-    p_sign.add_argument('--output', '-o', help='Output IPA path')
-    p_sign.set_defaults(func=cmd_sign)
-
-    # ── sign-apple ──
-    p_sapple = subparsers.add_parser('sign-apple', help='Sign IPA with Apple ID (interactive)')
-    p_sapple.add_argument('--ipa', required=True, help='Path to IPA to sign')
-    p_sapple.add_argument('--output', '-o', help='Output signed IPA path')
-    p_sapple.add_argument('--udid', help='Device UDID')
-    p_sapple.add_argument('--bundle-id', help='Override bundle identifier')
-    p_sapple.add_argument('--anisette-url', default='http://localhost:6969', help='Anisette server URL')
-    p_sapple.add_argument('--skip-sign', action='store_true',
-                          help='Skip signing entirely (for users who prefer Sideloadly or manual signing)')
-    p_sapple.set_defaults(func=cmd_sign_apple)
 
     # ── install ──
     p_install = subparsers.add_parser('install', help='Install IPA on connected device')
@@ -818,18 +560,12 @@ Examples:
     p_tunnel.set_defaults(func=cmd_tunnel)
 
     # ── full ──
-    p_full = subparsers.add_parser('full', help='Full pipeline: patch → sign → install')
+    p_full = subparsers.add_parser('full', help='Patch IPA, then optionally install (sign externally)')
     p_full.add_argument('--ipa', required=True, help='Path to input IPA file')
     p_full.add_argument('--dylib', required=True, help='Path to dylib to inject')
     p_full.add_argument('--output', '-o', help='Output IPA path')
     p_full.add_argument('--use-lief', action='store_true', help='Use lief library for injection')
-    p_full.add_argument('--apple-id', help='Apple ID email for free signing')
-    p_full.add_argument('--p12', help='Path to .p12 certificate for signing')
-    p_full.add_argument('--p12-password', help='Password for .p12 file')
-    p_full.add_argument('--mobileprovision', '-m', help='Path to .mobileprovision file')
     p_full.add_argument('--udid', help='Device UDID')
-    p_full.add_argument('--anisette-url', default='http://localhost:6969', help='Anisette server URL')
-    p_full.add_argument('--skip-sign', action='store_true', help='Skip signing step')
     p_full.add_argument('--install', action='store_true', help='Install on device after patching')
     p_full.set_defaults(func=cmd_full)
 

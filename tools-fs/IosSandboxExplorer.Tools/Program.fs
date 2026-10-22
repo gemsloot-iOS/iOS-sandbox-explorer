@@ -20,10 +20,11 @@ let private usage () =
     printfn "  IosSandboxExplorer.Tools client <command> [--host HOST] [--port PORT]"
     printfn "  IosSandboxExplorer.Tools --self-test"
     printfn ""
-    printfn "Patch (port of patcher.py patch — no Apple ID signing yet):"
+    printfn "Patch (dylib inject only — sign externally):"
     printfn "  IosSandboxExplorer.Tools patch --ipa FILE --dylib FILE [-o OUT.ipa]"
     printfn "  IosSandboxExplorer.Tools --self-test-patcher"
     printfn ""
+    printfn "IPA signing is out of scope (use feather / ipasigner / Sideloadly / zsign)."
     printfn "Python client.py / tools/patcher.py remain until the F# cutover phase."
 
 let private parseClientFlags (argv: string[]) (start: int) =
@@ -114,7 +115,7 @@ let main argv =
                     printfn ""
                     printfn "[+] PATCHED IPA READY (unsigned)"
                     printfn "    Output: %s" r.OutputPath
-                    printfn "    Apple ID signing will land in a later F# phase; use Python apple_account / Sideloadly for now."
+                    printfn "    Sign externally (feather / ipasigner / Sideloadly / zsign), then install."
                     0
                 | Error e ->
                     eprintfn "[!] %s" e

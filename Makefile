@@ -22,16 +22,7 @@ all: $(TARGET)
 $(TARGET): $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SOURCES)
 
-# Native macOS anisette helper (no Docker required)
-ANISETTE_SRC = tools/anisette_helper.m
-ANISETTE_BIN = tools/anisette_helper
-ANISETTE_FLAGS = -framework Foundation -fmodules -fobjc-arc
-
-anisette_helper: $(ANISETTE_SRC)
-	clang $(ANISETTE_SRC) -o $(ANISETTE_BIN) $(ANISETTE_FLAGS)
-	@echo "[+] Built $(ANISETTE_BIN)"
-
 clean:
-	rm -f $(TARGET) $(ANISETTE_BIN)
+	rm -f $(TARGET)
 
-.PHONY: all clean anisette_helper
+.PHONY: all clean
