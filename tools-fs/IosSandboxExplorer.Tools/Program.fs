@@ -15,7 +15,7 @@ open IosSandboxExplorer
 let private usage () =
     printfn "IosSandboxExplorer.Tools — F# host tooling (client + IPA patch)"
     printfn ""
-    printfn "Client (port of client.py):"
+    printfn "Client:"
     printfn "  IosSandboxExplorer.Tools <command> [--host HOST] [--port PORT]"
     printfn "  IosSandboxExplorer.Tools client <command> [--host HOST] [--port PORT]"
     printfn "  IosSandboxExplorer.Tools --self-test"
@@ -25,7 +25,7 @@ let private usage () =
     printfn "  IosSandboxExplorer.Tools --self-test-patcher"
     printfn ""
     printfn "IPA signing is out of scope (use feather / ipasigner / Sideloadly / zsign)."
-    printfn "Python client.py / tools/patcher.py remain until the F# cutover phase."
+    printfn "Python tools/patcher.py remains for install/devices/tunnel (no F# parity yet)."
 
 let private parseClientFlags (argv: string[]) (start: int) =
     let mutable host = "localhost"

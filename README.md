@@ -23,9 +23,8 @@ include/
   ShellServer.h
   ShellCommands.h
 tools/
-  patcher.py          — Cross-platform IPA patcher (inject only; no host signing)
-tools-fs/             — F# host tooling (client + patch)
-client.py             — Python client for remote command execution
+  patcher.py          — Python IPA patcher + device helpers (F# covers inject; see plan parity matrix)
+tools-fs/             — F# host tooling (TCP client + IPA patch/inject)
 Makefile              — Builds libShell.dylib (macOS / Xcode iphoneos SDK)
 ```
 
@@ -106,13 +105,9 @@ iproxy 8080 8080
 ### 3. Run commands
 
 ```bash
-# F#
 dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "ls"
-
-# Or Python
-python3 client.py "ls"
-python3 client.py "pwd"
-python3 client.py "scp -r Documents host:./downloads"
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "pwd"
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "scp -r Documents host:./downloads"
 ```
 
 ## Available Commands

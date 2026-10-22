@@ -1,5 +1,5 @@
-// F# port of tools/patcher.py — IPA patch/inject only (signing is external).
-// Python patcher.py remains until cutover.
+// F# IPA patch/inject only (signing is external).
+// Python tools/patcher.py kept for install/devices/tunnel (no F# parity yet).
 
 module IosSandboxExplorer.Patcher
 

@@ -1,5 +1,4 @@
-// F# port of client.py — TCP shell client + SCP download (FILE; lines).
-// Kept alongside Python client.py until cutover (Phase 10).
+// F# TCP shell client + SCP download (FILE; lines). Replaces former client.py.
 
 module IosSandboxExplorer.Client
 
