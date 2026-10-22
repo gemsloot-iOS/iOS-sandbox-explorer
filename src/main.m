@@ -15,5 +15,5 @@ static void initialize(void) {
     ShellServer *server = [ShellServer sharedInstance];
     [server startServerOnPort:8080];
     NSLog(@"[SandboxExplorer] Server started on 127.0.0.1:8080");
-    NSLog(@"[SandboxExplorer] Connect via: IosSandboxExplorer.Tools tunnel && IosSandboxExplorer.Tools help");
+    NSLog(@"[SandboxExplorer] Connect via: ./ise tunnel && ./ise \"help\"");
 }

@@ -1,15 +1,15 @@
-// CLI — F# host tools (client + patch + device).
+// CLI — F# host tools (client + patch + device). Prefer the repo-root ./ise launcher.
 //
-//   IosSandboxExplorer.Tools <shell-command> [--host HOST] [--port PORT]
-//   IosSandboxExplorer.Tools client <shell-command> [--host HOST] [--port PORT]
-//   IosSandboxExplorer.Tools patch --ipa FILE --dylib FILE [-o OUT]
-//   IosSandboxExplorer.Tools devices
-//   IosSandboxExplorer.Tools install --ipa FILE [--udid UDID]
-//   IosSandboxExplorer.Tools tunnel [--local-port N] [--remote-port N] [--udid UDID]
-//   IosSandboxExplorer.Tools full --ipa FILE --dylib FILE [-o OUT] [--install] [--udid UDID]
-//   IosSandboxExplorer.Tools --self-test
-//   IosSandboxExplorer.Tools --self-test-patcher
-//   IosSandboxExplorer.Tools --self-test-devices
+//   ise <shell-command> [--host HOST] [--port PORT]
+//   ise client <shell-command> [--host HOST] [--port PORT]
+//   ise patch --ipa FILE --dylib FILE [-o OUT]
+//   ise devices
+//   ise install --ipa FILE [--udid UDID]
+//   ise tunnel [--local-port N] [--remote-port N] [--udid UDID]
+//   ise full --ipa FILE --dylib FILE [-o OUT] [--install] [--udid UDID]
+//   ise --self-test
+//   ise --self-test-patcher
+//   ise --self-test-devices
 
 module Program
 
@@ -18,23 +18,23 @@ open System.IO
 open IosSandboxExplorer
 
 let private usage () =
-    printfn "IosSandboxExplorer.Tools — F# host tooling (client + IPA patch + device)"
+    printfn "ise — F# host tooling (client + IPA patch + device)"
     printfn ""
     printfn "Client:"
-    printfn "  IosSandboxExplorer.Tools <command> [--host HOST] [--port PORT]"
-    printfn "  IosSandboxExplorer.Tools client <command> [--host HOST] [--port PORT]"
-    printfn "  IosSandboxExplorer.Tools --self-test"
+    printfn "  ise <command> [--host HOST] [--port PORT]"
+    printfn "  ise client <command> [--host HOST] [--port PORT]"
+    printfn "  ise --self-test"
     printfn ""
     printfn "Patch (dylib inject only — sign externally):"
-    printfn "  IosSandboxExplorer.Tools patch --ipa FILE --dylib FILE [-o OUT.ipa]"
-    printfn "  IosSandboxExplorer.Tools --self-test-patcher"
+    printfn "  ise patch --ipa FILE --dylib FILE [-o OUT.ipa]"
+    printfn "  ise --self-test-patcher"
     printfn ""
     printfn "Device (Netimobiledevice):"
-    printfn "  IosSandboxExplorer.Tools devices"
-    printfn "  IosSandboxExplorer.Tools install --ipa FILE [--udid UDID]"
-    printfn "  IosSandboxExplorer.Tools tunnel [--local-port N] [--remote-port N] [--udid UDID]"
-    printfn "  IosSandboxExplorer.Tools full --ipa FILE --dylib FILE [-o OUT] [--install] [--udid UDID]"
-    printfn "  IosSandboxExplorer.Tools --self-test-devices"
+    printfn "  ise devices"
+    printfn "  ise install --ipa FILE [--udid UDID]"
+    printfn "  ise tunnel [--local-port N] [--remote-port N] [--udid UDID]"
+    printfn "  ise full --ipa FILE --dylib FILE [-o OUT] [--install] [--udid UDID]"
+    printfn "  ise --self-test-devices"
     printfn ""
     printfn "IPA signing is out of scope (use feather / ipasigner / Sideloadly / zsign)."
 

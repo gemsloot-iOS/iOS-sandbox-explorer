@@ -1,4 +1,4 @@
-# Phase 6 scaffold: restore + build F# host tooling (no feature ports yet).
+# Restore + build F# host tooling (tools-fs/ise) and smoke self-tests.
 
 name: Build F# tools
 
@@ -7,10 +7,12 @@ on:
     branches: [main]
     paths:
       - "tools-fs/**"
+      - "ise"
       - ".github/workflows/build-fs-tools.yml"
   pull_request:
     paths:
       - "tools-fs/**"
+      - "ise"
       - ".github/workflows/build-fs-tools.yml"
   workflow_dispatch:
 
@@ -31,25 +33,14 @@ jobs:
           dotnet-version: "8.0.x"
 
       - name: Restore
-        run: dotnet restore tools-fs/IosSandboxExplorer.Tools.sln
+        run: dotnet restore tools-fs/ise.sln
 
       - name: Build
-        run: dotnet build tools-fs/IosSandboxExplorer.Tools.sln -c Release --no-restore
+        run: dotnet build tools-fs/ise.sln -c Release --no-restore
 
-      - name: Smoke run client self-test
-        run: >
-          dotnet run
-          --project tools-fs/IosSandboxExplorer.Tools/IosSandboxExplorer.Tools.fsproj
-          -c Release --no-build -- --self-test
-
-      - name: Smoke run patcher self-test
-        run: >
-          dotnet run
-          --project tools-fs/IosSandboxExplorer.Tools/IosSandboxExplorer.Tools.fsproj
-          -c Release --no-build -- --self-test-patcher
-
-      - name: Smoke run devices self-test
-        run: >
-          dotnet run
-          --project tools-fs/IosSandboxExplorer.Tools/IosSandboxExplorer.Tools.fsproj
-          -c Release --no-build -- --self-test-devices
+      - name: Smoke run via ./ise launcher
+        run: |
+          chmod +x ./ise
+          ./ise --self-test
+          ./ise --self-test-patcher
+          ./ise --self-test-devices

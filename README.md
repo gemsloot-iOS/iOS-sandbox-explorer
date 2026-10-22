@@ -34,10 +34,11 @@ dump the keychain, or download files directly from the app's sandbox.
 ## Repository layout
 
 ```
+ise                   — short launcher for F# host tools (./ise …)
 src/                  — libShell Objective-C sources
 include/              — public headers
 Makefile              — builds libShell.dylib (macOS + Xcode iphoneos SDK)
-tools-fs/             — F# host tooling (client, patch, devices, install, tunnel, full)
+tools-fs/ise/         — F# host tooling project (client, patch, devices, install, tunnel, full)
 .github/workflows/
   build-dylib.yml     — macOS CI: build dylib on xcode-27 (iOS 27 SDK); Releases on v*.*.* tags
   build-fs-tools.yml  — Linux CI: restore/build F# tools + self-tests
@@ -65,7 +66,8 @@ REQUIRE_IOS_SDK_MAJOR=1 IPHONEOS_SDK_MIN_MAJOR=27 make
 
 ```bash
 # .NET 8 SDK: https://dotnet.microsoft.com/download
-dotnet build tools-fs/IosSandboxExplorer.Tools.sln -c Release
+dotnet build tools-fs/ise.sln -c Release
+chmod +x ./ise   # once, if needed
 ```
 
 ### Device USB (install / tunnel / list)
@@ -92,31 +94,33 @@ CI artifacts (`build-dylib.yml`):
 
 ## F# host tools
 
-`tools-fs/IosSandboxExplorer.Tools`
+Day-to-day commands use the root launcher **`./ise`** (wraps `tools-fs/ise`).
 
 ```bash
 # Shell client (TCP to libShell on device via tunnel)
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "ls"
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- client "pwd" --host localhost --port 8080
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "scp -r Documents host:./downloads"
+./ise "ls"
+./ise client "pwd" --host localhost --port 8080
+./ise "scp -r Documents host:./downloads"
 
 # Patch IPA (unsigned output)
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- patch --ipa MyApp.ipa --dylib libShell.dylib
+./ise patch --ipa MyApp.ipa --dylib libShell.dylib
 # → MyApp_patched.ipa
 
 # Device helpers (Netimobiledevice)
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- devices
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- install --ipa MyApp_signed.ipa [--udid UDID]
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- tunnel [--local-port 8080] [--remote-port 8080] [--udid UDID]
+./ise devices
+./ise install --ipa MyApp_signed.ipa [--udid UDID]
+./ise tunnel [--local-port 8080] [--remote-port 8080] [--udid UDID]
 
 # Patch then optionally install (still unsigned unless you signed first)
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- full --ipa MyApp.ipa --dylib libShell.dylib [--install] [--udid UDID]
+./ise full --ipa MyApp.ipa --dylib libShell.dylib [--install] [--udid UDID]
 
 # Offline self-tests (also run in CI)
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test-patcher
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test-devices
+./ise --self-test
+./ise --self-test-patcher
+./ise --self-test-devices
 ```
+
+Optional (advanced): `dotnet run --project tools-fs/ise -- …` does the same without `./ise`.
 
 `--use-lief` is accepted on `patch` / `full` for old-CLI compatibility; F# inject already reclaims `LC_CODE_SIGNATURE` space when needed (no Python `lief`).
 
@@ -125,7 +129,7 @@ dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test-devices
 ```bash
 # After patch — sign with feather / ipasigner / Sideloadly / zsign / etc.
 # Then:
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- install --ipa MyApp_signed.ipa
+./ise install --ipa MyApp_signed.ipa
 ```
 
 ## Connect and use
@@ -134,7 +138,7 @@ dotnet run --project tools-fs/IosSandboxExplorer.Tools -- install --ipa MyApp_si
 2. Start a USB tunnel:
 
 ```bash
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- tunnel --local-port 8080 --remote-port 8080
+./ise tunnel --local-port 8080 --remote-port 8080
 # foreground; Ctrl+C to stop
 ```
 
