@@ -1,4 +1,4 @@
-// F# port of tools/patcher.py — IPA patch path only (no Apple ID signing; that is Phase 9).
+// F# port of tools/patcher.py — IPA patch/inject only (signing is external).
 // Python patcher.py remains until cutover.
 
 module IosSandboxExplorer.Patcher
