@@ -1,4 +1,4 @@
-// CLI — F# host tools (client + patch + apple signing scaffolding).
+// CLI — F# host tools (client + patch + apple signing).
 // Python counterparts kept until Phase 10 cutover.
 
 module Program
@@ -19,14 +19,14 @@ let private usage () =
     printfn "  IosSandboxExplorer.Tools patch --ipa FILE --dylib FILE [-o OUT.ipa]"
     printfn "  IosSandboxExplorer.Tools --self-test-patcher"
     printfn ""
-    printfn "Apple ID / signing (Phase 9):"
+    printfn "Apple ID / signing (Phase 9b — live GSA/SRP in F#):"
     printfn "  IosSandboxExplorer.Tools apple check [--anisette-url URL]"
     printfn "  IosSandboxExplorer.Tools apple sign --ipa FILE --skip-sign"
-    printfn "  IosSandboxExplorer.Tools apple sign --ipa FILE   # live GSA: see error — use Python for now"
+    printfn "  IosSandboxExplorer.Tools apple sign --ipa FILE [--output OUT] [--udid UDID] [--bundle-id ID] [--anisette-url URL]"
     printfn "  IosSandboxExplorer.Tools --self-test-apple"
     printfn ""
-    printfn "TLS: certificate validation ON (unlike Python verify=False). Override only via IOS_SANDBOX_TLS_INSECURE=1."
-    printfn "Python tools remain until the F# cutover phase."
+    printfn "TLS: certificate validation ON by default. Override only via IOS_SANDBOX_TLS_INSECURE=1."
+    printfn "Anisette: HTTP server or macOS anisette_helper (no embedded Linux Unicorn ADI)."
 
 let private parseClientFlags (argv: string[]) (start: int) =
     let mutable host = "localhost"
@@ -92,6 +92,14 @@ let private parsePatchFlags (argv: string[]) (start: int) =
         | None, _ -> Error "patch requires --ipa"
         | _, None -> Error "patch requires --dylib"
 
+type private AppleSignArgs =
+    { Ipa: string
+      Skip: bool
+      Url: string
+      Output: string option
+      Udid: string option
+      BundleId: string option }
+
 let private parseAppleArgs (argv: string[]) =
     if argv.Length < 2 then Error "apple requires a subcommand: check | sign"
     else
@@ -108,11 +116,14 @@ let private parseAppleArgs (argv: string[]) =
                 | flag -> err <- Some $"Unknown check option: {flag}"
             match err with
             | Some e -> Error e
-            | None -> Ok($"check:{url}")
+            | None -> Ok(Choice1Of2 url)
         | "sign" ->
             let mutable ipa: string option = None
             let mutable skip = false
             let mutable url = Anisette.defaultAnisetteUrl
+            let mutable output: string option = None
+            let mutable udid: string option = None
+            let mutable bundleId: string option = None
             let mutable i = 2
             let mutable err: string option = None
             while i < argv.Length && err.IsNone do
@@ -126,8 +137,14 @@ let private parseAppleArgs (argv: string[]) =
                 | "--anisette-url" when i + 1 < argv.Length ->
                     url <- argv[i + 1]
                     i <- i + 2
-                | "--output" | "-o" | "--udid" | "--bundle-id" when i + 1 < argv.Length ->
-                    // Accepted for CLI compatibility; live path still gated.
+                | "--output" | "-o" when i + 1 < argv.Length ->
+                    output <- Some argv[i + 1]
+                    i <- i + 2
+                | "--udid" when i + 1 < argv.Length ->
+                    udid <- Some argv[i + 1]
+                    i <- i + 2
+                | "--bundle-id" when i + 1 < argv.Length ->
+                    bundleId <- Some argv[i + 1]
                     i <- i + 2
                 | flag when flag.StartsWith("-") -> err <- Some $"Unknown sign option: {flag}"
                 | other -> err <- Some $"Unexpected: {other}"
@@ -135,61 +152,66 @@ let private parseAppleArgs (argv: string[]) =
             | Some e, _ -> Error e
             | None, None -> Error "apple sign requires --ipa"
             | None, Some path ->
-                if skip then Ok($"sign-skip:{path}")
-                else Ok($"sign-live:{path}|{url}")
+                Ok(
+                    Choice2Of2
+                        { Ipa = path
+                          Skip = skip
+                          Url = url
+                          Output = output
+                          Udid = udid
+                          BundleId = bundleId }
+                )
         | other -> Error $"Unknown apple subcommand: {other}"
 
-let private runApple (token: string) =
-    if token.StartsWith("check:") then
-        AppleSign.checkAnisette (token.Substring(6))
-    elif token.StartsWith("sign-skip:") then
-        match AppleSign.signIpaSkipSign (token.Substring(10)) with
+let private runApple (cmd: Choice<string, AppleSignArgs>) =
+    match cmd with
+    | Choice1Of2 url -> AppleSign.checkAnisette url
+    | Choice2Of2 args when args.Skip ->
+        match AppleSign.signIpaSkipSign args.Ipa with
         | Ok _ -> 0
         | Error e ->
             eprintfn "[!] %s" e
             1
-    elif token.StartsWith("sign-live:") then
-        let rest = token.Substring(10)
-        let parts = rest.Split('|')
-        let ipa = parts.[0]
-        let url = if parts.Length > 1 then parts.[1] else Anisette.defaultAnisetteUrl
-        match AppleSign.signIpaLive ipa None None None url with
-        | Ok _ -> 0
+    | Choice2Of2 args ->
+        match AppleSign.signIpaLive args.Ipa args.Output args.Udid args.BundleId args.Url with
+        | Ok path ->
+            printfn "[+] Done: %s" path
+            0
         | Error e ->
             eprintfn "[!] %s" e
             1
-    else
-        eprintfn "Internal apple dispatch error"
-        1
 
 let private selfTestApple () =
-    let a = Anisette.selfTest ()
-    if a <> 0 then a
+    let srp = AppleSrp.selfTest ()
+    if srp <> 0 then srp
     else
-        let c = AppleCrypto.selfTest ()
-        if c <> 0 then c
+        let a = Anisette.selfTest ()
+        if a <> 0 then a
         else
-            // skip-sign dry-run with a temp file
-            let tmp = Path.Combine(Path.GetTempPath(), "apple-skip-" + Guid.NewGuid().ToString("N") + ".ipa")
-            File.WriteAllBytes(tmp, [| 0x50uy; 0x4Buy |]) // minimal bytes
-            try
-                match AppleSign.signIpaSkipSign tmp with
-                | Ok p when p = tmp ->
-                    match AppleSign.signIpaLive tmp None None None Anisette.defaultAnisetteUrl with
-                    | Error _ ->
-                        printfn "self-test-apple OK: anisette + crypto + skip-sign; live path correctly gated"
+            let c = AppleCrypto.selfTest ()
+            if c <> 0 then c
+            else
+                let tmp =
+                    Path.Combine(
+                        Path.GetTempPath(),
+                        "apple-skip-" + Guid.NewGuid().ToString("N") + ".ipa"
+                    )
+                File.WriteAllBytes(tmp, [| 0x50uy; 0x4Buy |])
+                try
+                    match AppleSign.signIpaSkipSign tmp with
+                    | Ok p when p = tmp ->
+                        // Live path requires interactive credentials — do not call it in CI.
+                        printfn
+                            "self-test-apple OK: SRP vectors + anisette + crypto + skip-sign (live path is interactive)"
                         0
                     | Ok _ ->
-                        eprintfn "self-test-apple FAIL: live path should Error without credentials"
+                        eprintfn "self-test-apple FAIL: skip-sign path mismatch"
                         1
-                | Ok _ ->
-                    eprintfn "self-test-apple FAIL: skip-sign path mismatch"
-                    1
-                | Error e ->
-                    eprintfn "self-test-apple FAIL: %s" e
-                    1
-            finally
-                try File.Delete(tmp) with _ -> ()
+                    | Error e ->
+                        eprintfn "self-test-apple FAIL: %s" e
+                        1
+                finally
+                    try File.Delete(tmp) with _ -> ()
 
 [<EntryPoint>]
 let main argv =
@@ -203,6 +225,7 @@ let main argv =
             0
         | "--self-test" -> Client.selfTest ()
         | "--self-test-patcher" -> Patcher.selfTest ()
+        | "--self-test-srp" -> AppleSrp.selfTest ()
         | "--self-test-apple" -> selfTestApple ()
         | "patch" ->
             match parsePatchFlags argv 1 with
@@ -216,7 +239,7 @@ let main argv =
                     printfn ""
                     printfn "[+] PATCHED IPA READY (unsigned)"
                     printfn "    Output: %s" r.OutputPath
-                    printfn "    Sign with: python3 tools/apple_account.py sign --ipa %s" r.OutputPath
+                    printfn "    Sign with: IosSandboxExplorer.Tools apple sign --ipa %s" r.OutputPath
                     printfn "            or: IosSandboxExplorer.Tools apple sign --ipa %s --skip-sign" r.OutputPath
                     0
                 | Error e ->

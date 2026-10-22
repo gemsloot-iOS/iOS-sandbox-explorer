@@ -14,12 +14,17 @@
     <Compile Include="AppleTls.fs" />
     <Compile Include="Anisette.fs" />
     <Compile Include="AppleCrypto.fs" />
+    <Compile Include="AppleSrp.fs" />
+    <Compile Include="ApplePlist.fs" />
+    <Compile Include="AppleAuth.fs" />
+    <Compile Include="DeveloperPortal.fs" />
     <Compile Include="AppleSign.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="plist-cil" Version="2.2.0" />
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.4.0" />
   </ItemGroup>
 
 </Project>

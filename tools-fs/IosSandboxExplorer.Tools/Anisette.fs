@@ -77,6 +77,36 @@ let buildHeadersFromAnisette
 type IAnisetteProvider =
     abstract Fetch: unit -> Map<string, string>
     abstract GenerateHeaders: unit -> AnisetteHeaders
+    /// Last Client-Info used when generating headers (for GSA HTTP header).
+    abstract LastClientInfo: string with get
+
+let headersToMap (h: AnisetteHeaders) : Map<string, string> =
+    Map.ofList
+        [ "X-Apple-I-Client-Time", h.ClientTime
+          "X-Apple-I-TimeZone", h.TimeZone
+          "X-Apple-Locale", h.Locale
+          "X-Apple-I-MD", h.Md
+          "X-Apple-I-MD-M", h.MdM
+          "X-Apple-I-MD-LU", h.MdLu
+          "X-Apple-I-MD-RINFO", h.MdRinfo
+          "X-Apple-I-SRL-NO", h.SrlNo
+          "X-Mme-Device-Id", h.DeviceId
+          "X-Mme-Client-Info", h.ClientInfo ]
+
+let generateCpd (provider: IAnisetteProvider) : Map<string, obj> =
+    let h = provider.GenerateHeaders()
+    let baseMap = headersToMap h
+    baseMap
+    |> Map.toList
+    |> List.map (fun (k, v) -> k, box v)
+    |> List.append
+        [ "bootstrap", box true
+          "icscrec", box true
+          "pbe", box false
+          "prkgen", box true
+          "svct", box "iCloud"
+          "loc", box "en_US" ]
+    |> Map.ofList
 
 type HttpAnisetteProvider(serverUrl: string, ?httpClient: HttpClient) =
     let url = serverUrl.TrimEnd('/')
@@ -84,11 +114,14 @@ type HttpAnisetteProvider(serverUrl: string, ?httpClient: HttpClient) =
     let ownsClient = httpClient.IsNone
     let deviceId = Guid.NewGuid().ToString("D").ToUpperInvariant()
     let localUserId = Guid.NewGuid().ToString("D").ToUpperInvariant()
+    let mutable lastClientInfo = clientInfoFallback
 
     interface IDisposable with
         member _.Dispose() = if ownsClient then client.Dispose()
 
     interface IAnisetteProvider with
+        member _.LastClientInfo = lastClientInfo
+
         member _.Fetch() =
             try
                 let resp = client.GetAsync(url).GetAwaiter().GetResult()
@@ -100,7 +133,7 @@ type HttpAnisetteProvider(serverUrl: string, ?httpClient: HttpClient) =
                 raise (
                     AnisetteConnectionException(
                         $"Cannot connect to anisette server at {url}\n"
-                        + "On Linux, use Python `anisette` or an HTTP anisette server.\n"
+                        + "On Linux, start an HTTP anisette server (F# does not embed Unicorn ADI).\n"
                         + $"Detail: {ex.Message}"
                     )
                 )
@@ -108,12 +141,17 @@ type HttpAnisetteProvider(serverUrl: string, ?httpClient: HttpClient) =
 
         member this.GenerateHeaders() =
             let data = (this :> IAnisetteProvider).Fetch()
-            buildHeadersFromAnisette data deviceId localUserId
+            let h = buildHeadersFromAnisette data deviceId localUserId
+            lastClientInfo <- h.ClientInfo
+            h
 
 /// Native macOS helper (tools/anisette_helper) — optional; not required for CI.
 type NativeAnisetteProvider(helperBin: string) =
-    let deviceId = Guid.NewGuid().ToString("D").ToUpperInvariant()
-    let localUserId = Guid.NewGuid().ToString("D").ToUpperInvariant()
+    let mutable deviceId = Guid.NewGuid().ToString("D").ToUpperInvariant()
+    let mutable localUserId = Guid.NewGuid().ToString("D").ToUpperInvariant()
+    let mutable lastClientInfo = clientInfoFallback
+    let mutable extraClientInfo: string option = None
+    let mutable extraSrl: string option = None
 
     let runHelper () =
         if not (File.Exists(helperBin)) then
@@ -137,16 +175,39 @@ type NativeAnisetteProvider(helperBin: string) =
             raise (Exception($"anisette_helper failed (exit {p.ExitCode}): {stderr.Trim()}"))
         jsonToMap stdout
 
+    do
+        let data = runHelper ()
+        deviceId <- data |> Map.tryFind "X-Mme-Device-Id" |> Option.defaultValue deviceId
+        localUserId <- data |> Map.tryFind "X-Apple-I-MD-LU" |> Option.defaultValue localUserId
+        extraClientInfo <- data |> Map.tryFind "X-Mme-Client-Info"
+        extraSrl <- data |> Map.tryFind "X-Apple-SRL-NO"
+
     interface IAnisetteProvider with
+        member _.LastClientInfo = lastClientInfo
+
         member _.Fetch() =
             let raw = runHelper ()
             Map.ofList
                 [ "X-Apple-I-MD", raw.["X-Apple-I-MD"]
-                  "X-Apple-I-MD-M", raw.["X-Apple-I-MD-M"] ]
+                  "X-Apple-I-MD-M", raw.["X-Apple-I-MD-M"]
+                  "X-Mme-Device-Id", deviceId ]
 
         member _.GenerateHeaders() =
             let raw = runHelper ()
-            buildHeadersFromAnisette raw deviceId localUserId
+            let merged =
+                raw
+                |> Map.add "X-Mme-Device-Id" deviceId
+                |> (fun m ->
+                    match extraClientInfo with
+                    | Some ci -> Map.add "X-Mme-Client-Info" ci m
+                    | None -> m)
+                |> (fun m ->
+                    match extraSrl with
+                    | Some s -> Map.add "X-Apple-I-SRL-NO" s m
+                    | None -> m)
+            let h = buildHeadersFromAnisette merged deviceId localUserId
+            lastClientInfo <- h.ClientInfo
+            h
 
 let isMacOS () = OperatingSystem.IsMacOS()
 
