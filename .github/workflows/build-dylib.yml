@@ -18,35 +18,53 @@ permissions:
 jobs:
   build:
     name: Build arm64 iphoneos dylib
-    runs-on: macos-latest
+    # iOS 27 SDK lives on the dedicated Xcode 27 image (GA 2026-10-15).
+    # macos-latest / macos-26 tops out at iOS 26.x — do not pretend otherwise.
+    runs-on: xcode-27
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show Xcode / SDK
+      - name: Show Xcode / SDK and require iOS 27+
         run: |
+          set -euo pipefail
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
-          xcrun --sdk iphoneos --show-sdk-version
+          SDK_VER="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iphoneos SDK version: ${SDK_VER}"
+          SDK_MAJOR="${SDK_VER%%.*}"
+          if [ -z "${SDK_MAJOR}" ] || [ "${SDK_MAJOR}" -lt 27 ]; then
+            echo "[!] HALT: need iphoneos SDK major >= 27 (got '${SDK_VER}')."
+            echo "    Runner must provide a real iOS 27 SDK — do not fake version numbers."
+            exit 1
+          fi
+          echo "[+] iphoneos SDK major ${SDK_MAJOR} >= 27"
 
       - name: Build libShell.dylib
         run: make clean && make
         env:
           IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+          REQUIRE_IOS_SDK_MAJOR: "1"
+          IPHONEOS_SDK_MIN_MAJOR: "27"
 
-      - name: Verify Mach-O platform and min OS
+      - name: Verify Mach-O min OS 14.0 and SDK 27+
         run: |
           set -euo pipefail
           file libShell.dylib
           echo "--- version load commands ---"
           otool -l libShell.dylib | grep -A6 -E 'LC_BUILD_VERSION|LC_VERSION_MIN_IPHONEOS'
-          # Expect deployment target 14.0 from -miphoneos-version-min=14.0
-          if otool -l libShell.dylib | grep -E 'minos 14\.0|version 14\.0' >/dev/null; then
-            echo "[+] min OS 14.0 confirmed"
-          else
+          # Deployment target stays 14.0 (preference); SDK field must reflect iOS 27+.
+          if ! otool -l libShell.dylib | grep -E 'minos 14\.0|version 14\.0' >/dev/null; then
             echo "[!] Expected min OS 14.0 in LC_BUILD_VERSION / LC_VERSION_MIN_IPHONEOS"
             exit 1
           fi
+          echo "[+] min OS 14.0 confirmed"
+          if ! otool -l libShell.dylib | grep -E 'sdk 27\.' >/dev/null; then
+            echo "[!] Expected sdk 27.x in LC_BUILD_VERSION (built with iOS 27 SDK)"
+            otool -l libShell.dylib | grep -A6 LC_BUILD_VERSION || true
+            exit 1
+          fi
+          echo "[+] LC_BUILD_VERSION sdk 27.x confirmed"
 
       - name: Upload libShell.dylib artifact
         uses: actions/upload-artifact@v4
