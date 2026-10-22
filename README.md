@@ -1,159 +1,182 @@
 # iOS Sandbox Explorer
 
-Inject a custom DYLIB into any iOS app, sign the IPA with an **external** signer (feather, ipasigner.com, Sideloadly, zsign, etc.), install it, and get interactive shell access to the app's sandbox over USB — on any device, jailbroken or not.
+Inject a custom dylib into any iOS app IPA, **sign with an external tool**, install it, and get an interactive shell into that app’s sandbox over USB.
 
-Host Apple ID / GSA / anisette signing is **not** part of this project.
+This is a **jailed / sideload** workflow: `libShell.dylib` is loaded via `LC_LOAD_DYLIB` (constructor inject). There is **no** Theos tweak, **no** Cydia Substrate, and **no** Ellekit in this repository.
 
-## How It Works
+Host Apple ID / GSA / anisette / Developer Portal signing is **not** part of this project. Sign with feather, [ipasigner](https://ipasigner.com), Sideloadly, zsign, or any other external signer.
 
-1. **Build** `libShell.dylib` — an Objective-C TCP server with built-in sandbox-safe commands (no `popen`, no `exec`)
-2. **Patch** any IPA — inject the DYLIB, add network entitlements, update `Info.plist`
-3. **Sign** the patched IPA with an external tool of your choice
-4. **Install** to device (e.g. `ideviceinstaller` or your signer’s install flow)
-5. **Connect** via USB tunnel → run commands, dump keychain, download files from the app's sandbox
+## How it works
 
-## Architecture
+1. **Build** `libShell.dylib` — Objective-C TCP server with built-in sandbox-safe commands (no `popen`, no `exec`)
+2. **Patch** an IPA with the F# tools — inject the dylib, ATS plist tweak, write sample entitlements, repack (**unsigned**)
+3. **Sign** the patched IPA externally
+4. **Install** (F# `install` via Netimobiledevice, or your signer’s install flow)
+5. **Tunnel** USB → localhost and run shell commands / SCP / keychain dump
+
+## Repository layout
 
 ```
-src/
-  main.m              — DYLIB entry point, starts TCP server
-  ShellServer.m       — TCP server (port 8080)
-  ShellCommands.m     — Built-in commands (sandbox-safe, no popen)
-include/
-  ShellServer.h
-  ShellCommands.h
-tools/
-  patcher.py          — Python IPA patcher + device helpers (F# covers inject; see plan parity matrix)
-tools-fs/             — F# host tooling (TCP client + IPA patch/inject)
-Makefile              — Builds libShell.dylib (macOS / Xcode iphoneos SDK)
+src/                  — libShell Objective-C sources
+include/              — public headers
+Makefile              — builds libShell.dylib (macOS + Xcode iphoneos SDK)
+tools-fs/             — F# host tooling (client, patch, devices, install, tunnel, full)
+.github/workflows/
+  build-dylib.yml     — macOS CI: build dylib on xcode-27 (iOS 27 SDK); Releases on v*.*.* tags
+  build-fs-tools.yml  — Linux CI: restore/build F# tools + self-tests
 ```
+
+There is **no** `tools/` Python tree, **no** `client.py` / `patcher.py`, and **no** `ios-patch/` legacy script directory.
 
 ## Prerequisites
 
-### macOS
+### Build `libShell.dylib` (macOS)
+
+- Xcode with an **iphoneos** SDK (CI uses the **iOS 27** SDK on the `xcode-27` runner)
+- Deployment target stays **iOS 14.0** (`IPHONEOS_DEPLOYMENT_TARGET`)
 
 ```bash
-# Python & dependencies (optional if using F# tools only)
-python3 -m pip install -r tools/requirements.txt
-
-# USB install / tunneling
-brew install libimobiledevice ideviceinstaller
-
-# DYLIB build (Xcode Command Line Tools)
-xcode-select --install
+xcode-select --install   # if needed
+make                     # → libShell.dylib
 ```
 
-### Linux (Ubuntu / Kali / Debian)
+Optional hard gate (matches CI):
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r tools/requirements.txt
-
-sudo apt install libimobiledevice-utils ideviceinstaller
+REQUIRE_IOS_SDK_MAJOR=1 IPHONEOS_SDK_MIN_MAJOR=27 make
 ```
 
-> **Note:** Always activate the venv before running Python tool commands:
-> `source .venv/bin/activate`
-
-## Building the DYLIB
-
-`libShell.dylib` is **not** committed to this repository. Obtain it by building on macOS, or download a release/CI artifact.
-
-### macOS (build from source)
+### Host tooling (any OS with .NET 8)
 
 ```bash
-make
+# .NET 8 SDK: https://dotnet.microsoft.com/download
+dotnet build tools-fs/IosSandboxExplorer.Tools.sln -c Release
 ```
 
-Creates `libShell.dylib` in the project root.
+### Device USB (install / tunnel / list)
 
-### Other platforms (pre-built)
+- A paired, trusted device
+- **usbmuxd** (Linux/macOS) or Apple Mobile Device Support (Windows)
+- F# device commands use [Netimobiledevice](https://github.com/artehe/Netimobiledevice) — no `pymobiledevice3` / no required `ideviceinstaller` / `iproxy` binaries
 
-- **GitHub Releases** — download `libShell.dylib` from the latest [Release](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/releases) (published when a semver tag such as `v0.0.1` is pushed).
-- **CI artifacts** — download the `libShell-dylib` artifact from a green [Actions](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/actions) run of **Build libShell.dylib**.
+## Building / obtaining `libShell.dylib`
 
-## Patching an IPA
+`libShell.dylib` is **not** committed to git.
 
-```bash
-# F# (preferred)
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- patch --ipa MyApp.ipa --dylib libShell.dylib
+| Source | Notes |
+|--------|--------|
+| `make` on macOS | Builds with current iphoneos SDK; min OS **14.0** |
+| [GitHub Releases](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/releases) | Published only when a semver tag `v*.*.*` is pushed to a commit **on `main`** |
+| [Actions](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/actions) artifact `libShell-dylib` | From workflow **Build libShell.dylib** (every push/PR; not a Release) |
 
-# Or Python
-python3 tools/patcher.py patch --ipa MyApp.ipa --dylib libShell.dylib
-# → MyApp_patched.ipa
-```
+CI facts (workflow `build-dylib.yml`):
 
-Works on Windows, Linux, and macOS. No Xcode or `insert_dylib` required. Output is **unsigned** — sign with feather / ipasigner / Sideloadly / zsign (or similar) before install.
+- Runner: **`xcode-27`** (real iOS **27** SDK; fails if SDK major &lt; 27)
+- Mach-O check: `minos 14.0` and `sdk 27.x`
+- Releases: tag push `v*.*.*` only — CI never creates tags
 
-## Installing on Device
+## F# host tools
 
-```bash
-ideviceinstaller -u <device-udid> install MyApp_signed.ipa
-```
-
-## Connecting and Using
-
-### 1. Launch the patched app on your device
-
-### 2. Set up USB tunnel
+Project: `tools-fs/IosSandboxExplorer.Tools`
 
 ```bash
-iproxy 8080 8080
-```
-
-### 3. Run commands
-
-```bash
+# Shell client (TCP to libShell on device via tunnel)
 dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "ls"
-dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "pwd"
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- client "pwd" --host localhost --port 8080
 dotnet run --project tools-fs/IosSandboxExplorer.Tools -- "scp -r Documents host:./downloads"
+
+# Patch IPA (unsigned output)
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- patch --ipa MyApp.ipa --dylib libShell.dylib
+# → MyApp_patched.ipa
+
+# Device helpers (Netimobiledevice)
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- devices
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- install --ipa MyApp_signed.ipa [--udid UDID]
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- tunnel [--local-port 8080] [--remote-port 8080] [--udid UDID]
+
+# Patch then optionally install (still unsigned unless you signed first)
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- full --ipa MyApp.ipa --dylib libShell.dylib [--install] [--udid UDID]
+
+# Offline self-tests (also run in CI)
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test-patcher
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- --self-test-devices
 ```
 
-## Available Commands
+`--use-lief` is accepted on `patch` / `full` for old-CLI compatibility; F# inject already reclaims `LC_CODE_SIGNATURE` space when needed (no Python `lief`).
 
-The DYLIB implements built-in commands — **no `popen()`, no `exec()`** (safe from iOS entitlement restrictions):
+## Sign externally, then install
 
-| Command | Description |
-|---------|-------------|
-| `ls [path]` | List directory |
-| `pwd` | Current directory |
-| `cd <path>` | Change directory |
-| `id` | User and group IDs |
-| `whoami` | Current username |
-| `uname` | System information |
-| `echo <text>` | Print text |
-| `cat <file>` | Print file contents |
-| `cp <src> <dst>` | Copy file/directory |
-| `mv <src> <dst>` | Move file/directory |
-| `rm <path>` | Remove file/directory |
-| `mkdir <path>` | Create directory |
-| `stat <path>` | File metadata |
-| `find <path>` | Find files |
-| `env` | Environment variables |
-| `scp -r <src> host:<dst>` | Download to host (base64) |
-| `keychain dump` | Dump all keychain items accessible to the app |
-| `keychain dump --filter <str>` | Dump keychain items matching a string in any field |
-| `keychain dump --filter self` | Dump keychain items matching the app's own bundle ID |
-| `keychain dump --class <type>` | Filter by item class: `generic`, `internet`, `cert`, `key` |
+```bash
+# After patch — sign with feather / ipasigner / Sideloadly / zsign / etc.
+# Then:
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- install --ipa MyApp_signed.ipa
+```
+
+## Connect and use
+
+1. Launch the patched app on the device (dylib starts a TCP server on **port 8080**, loopback on device).
+2. Start a USB tunnel:
+
+```bash
+dotnet run --project tools-fs/IosSandboxExplorer.Tools -- tunnel --local-port 8080 --remote-port 8080
+# foreground; Ctrl+C to stop
+```
+
+3. Run commands from the host (examples above).
+
+## Available commands (dylib)
+
+Implemented in-process via Foundation/POSIX — **no `popen()`, no `exec()`**. Full list: run `help` on the device shell.
+
+Highlights:
+
+| Area | Examples |
+|------|----------|
+| Navigation | `ls`, `cd`, `pwd`, `tree` |
+| Files | `cat`, `head`, `tail`, `hexdump`, `cp`, `mv`, `rm`, `mkdir`, `stat`, `find`, `grep`, … |
+| System | `id`, `uname`, `env`, `bundle`, `sandbox`, `sysinfo`, `memory`, … |
+| Keychain | `keychain dump`, `keychain dump --filter …`, `keychain groups` |
+| Transfer | `scp -r <src> host:<dst>`, `download` |
+| Meta | `help`, `version` |
+
+Keychain access is limited to what this app’s entitlements allow. There is **no** `--jailbreak` patcher flag.
+
+## Out of scope
+
+| Topic | Status |
+|-------|--------|
+| Host Apple ID / anisette / portal signing | Removed — use external signers |
+| Python host tools | Removed — use `tools-fs` |
+| Theos jailbreak tweak path | Not used / not shipped |
+| Cydia Substrate / Ellekit | Not used — product path is constructor `LC_LOAD_DYLIB` inject only |
+| Auto-tagging on every `main` push | No — Releases only on `v*.*.*` tags |
 
 ## Troubleshooting
 
 ### `Connection refused` on port 8080
-- Verify the patched app is running on device
-- Check `iproxy 8080 8080` is running
-- Try relaunching the app
 
-### App rejected on install (`ApplicationVerificationFailed`)
-- Re-sign with a valid external signer / fresh cert and matching device UDID
+- Patched app must be running
+- Tunnel must be up (`tunnel` or equivalent)
+- Relaunch the app after install
 
-### `ideviceinstaller not found`
-- macOS: `brew install ideviceinstaller`
-- Linux: `apt install ideviceinstaller`
-- Windows: [libimobiledevice-win32](https://github.com/libimobiledevice-win32/imobiledevice-net)
+### Install / device list fails
 
-## Security Notes
+- Device unlocked, trusted, and paired
+- usbmuxd / Apple Mobile Device Support running
+- IPA must be **signed** for the target device before `install` succeeds
 
-- For testing and research purposes only
-- Injected code runs entirely within the app's sandbox
-- Network traffic is tunnelled over USB (never exposed to the network)
+### App rejected (`ApplicationVerificationFailed`)
+
+- Re-sign with a valid external cert / profile matching the device UDID
+
+### `make` / iphoneos SDK errors
+
+- Need macOS + Xcode with an iphoneos SDK
+- CI requires SDK major ≥ 27; locally, older SDKs may still build but will warn
+
+## Security notes
+
+- For testing and research only
+- Injected code runs inside the host app’s sandbox
+- Shell TCP is bound to loopback on device; reach it over USB tunnel, not the LAN
