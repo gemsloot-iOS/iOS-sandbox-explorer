@@ -1,10 +1,19 @@
-# Overview and Workflow of the iOS Sandbox Explorer
+# iOS Sandbox Explorer
 
-The iOS Sandbox Explorer lets you create a custom DYLIB, inject it into any iOS app, and interact with the app's sandbox through a simple workflow. 
+### Overview and Workflow
 
-Once created, the resulting IPA can be signed using an external signer and installed onto your device. There are many ways to sign your IPA for free without requiring a Mac or being jailbroken; some examples include Feather, Ipasigner.com, Sideloadly, and Zsign. After installing the app onto your device, you will have access to an interactive shell within the app's sandbox over a USB connection.
+The **iOS Sandbox Explorer** lets you create a custom DYLIB, inject it into any iOS app, and interact with the app's sandbox through a simple USB tunnel. 
 
-This project does not provide support for Apple ID/GSA/anisette signing so you must use your own preferred method of signing.
+Once created, the resulting IPA can be signed using an external signer and installed onto your device. 
+
+After installing the app onto your device, you will have access to an interactive shell within the app's sandbox over a USB connection.
+
+> [!TIP]
+> There are many ways to sign your IPA for free without requiring a Mac or being jailbroken; some examples include:
+> [Feather](https://github.com/claration/feather),  [ipasigner.com](https://www.ipasigner.com/), [Sideloadly](https://sideloadly.io/), [Zsign](https://github.com/zhlynn/zsign)
+
+> [!WARNING]
+> _This project does not provide support for Apple ID/GSA/anisette signing so you must use your own preferred method of signing._
 
 ## Workflow
 
@@ -18,7 +27,9 @@ The general workflow is as follows:
 
 4. Install the patched IPA onto your device (e.g., using ideviceinstaller or through your signer's installation process).
 
-5. Connect to the device via USB tunnel and execute commands (e.g., ls/cat), dump the keychain, or download files directly from the app's sandbox.
+5. Connect to the device via USB tunnel and execute the DYLIB's built-in commands — no popen(), no exec() (safe from iOS entitlement restrictions).
+
+dump the keychain, or download files directly from the app's sandbox.
 
 ## Repository layout
 
@@ -31,8 +42,6 @@ tools-fs/             — F# host tooling (client, patch, devices, install, tunn
   build-dylib.yml     — macOS CI: build dylib on xcode-27 (iOS 27 SDK); Releases on v*.*.* tags
   build-fs-tools.yml  — Linux CI: restore/build F# tools + self-tests
 ```
-
-There is **no** `tools/` Python tree, **no** `client.py` / `patcher.py`, and **no** `ios-patch/` legacy script directory.
 
 ## Prerequisites
 
@@ -63,7 +72,7 @@ dotnet build tools-fs/IosSandboxExplorer.Tools.sln -c Release
 
 - A paired, trusted device
 - **usbmuxd** (Linux/macOS) or Apple Mobile Device Support (Windows)
-- F# device commands use [Netimobiledevice](https://github.com/artehe/Netimobiledevice) — no `pymobiledevice3` / no required `ideviceinstaller` / `iproxy` binaries
+- F# device commands use [Netimobiledevice](https://github.com/artehe/Netimobiledevice)
 
 ## Building / obtaining `libShell.dylib`
 
@@ -75,7 +84,7 @@ dotnet build tools-fs/IosSandboxExplorer.Tools.sln -c Release
 | [GitHub Releases](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/releases) | Published only when a semver tag `v*.*.*` is pushed to a commit **on `main`** |
 | [Actions](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/actions) artifact `libShell-dylib` | From workflow **Build libShell.dylib** (every push/PR; not a Release) |
 
-CI facts (workflow `build-dylib.yml`):
+CI artifacts (`build-dylib.yml`):
 
 - Runner: **`xcode-27`** (real iOS **27** SDK; fails if SDK major &lt; 27)
 - Mach-O check: `minos 14.0` and `sdk 27.x`
@@ -83,7 +92,7 @@ CI facts (workflow `build-dylib.yml`):
 
 ## F# host tools
 
-Project: `tools-fs/IosSandboxExplorer.Tools`
+`tools-fs/IosSandboxExplorer.Tools`
 
 ```bash
 # Shell client (TCP to libShell on device via tunnel)
@@ -133,30 +142,38 @@ dotnet run --project tools-fs/IosSandboxExplorer.Tools -- tunnel --local-port 80
 
 ## Available commands (dylib)
 
-Implemented in-process via Foundation/POSIX — **no `popen()`, no `exec()`**. Full list: run `help` on the device shell.
+Implemented in-process via `Foundation/POSIX`
+
+> [!TIP]
+> Full list: run `help` on the device shell.
 
 Highlights:
 
-| Area | Examples |
-|------|----------|
-| Navigation | `ls`, `cd`, `pwd`, `tree` |
-| Files | `cat`, `head`, `tail`, `hexdump`, `cp`, `mv`, `rm`, `mkdir`, `stat`, `find`, `grep`, … |
-| System | `id`, `uname`, `env`, `bundle`, `sandbox`, `sysinfo`, `memory`, … |
-| Keychain | `keychain dump`, `keychain dump --filter …`, `keychain groups` |
-| Transfer | `scp -r <src> host:<dst>`, `download` |
-| Meta | `help`, `version` |
+| Command | Description |
+|---------|-------------|
+| `ls [path]` | List directory |
+| `pwd` | Current directory |
+| `cd <path>` | Change directory |
+| `id` | User and group IDs |
+| `whoami` | Current username |
+| `uname` | System information |
+| `echo <text>` | Print text |
+| `cat <file>` | Print file contents |
+| `cp <src> <dst>` | Copy file/directory |
+| `mv <src> <dst>` | Move file/directory |
+| `rm <path>` | Remove file/directory |
+| `mkdir <path>` | Create directory |
+| `stat <path>` | File metadata |
+| `find <path>` | Find files |
+| `env` | Environment variables |
+| `scp -r <src> host:<dst>` | Download to host (base64) |
+| `keychain dump` | Dump all keychain items accessible to the app |
+| `keychain dump --filter <str>` | Dump keychain items matching a string in any field |
+| `keychain dump --filter self` | Dump keychain items matching the app's own bundle ID |
+| `keychain dump --class <type>` | Filter by item class: `generic`, `internet`, `cert`, `key` |
 
-Keychain access is limited to what this app’s entitlements allow. There is **no** `--jailbreak` patcher flag.
-
-## Out of scope
-
-| Topic | Status |
-|-------|--------|
-| Host Apple ID / anisette / portal signing | Removed — use external signers |
-| Python host tools | Removed — use `tools-fs` |
-| Theos jailbreak tweak path | Not used / not shipped |
-| Cydia Substrate / Ellekit | Not used — product path is constructor `LC_LOAD_DYLIB` inject only |
-| Auto-tagging on every `main` push | No — Releases only on `v*.*.*` tags |
+> [!NOTE]
+> Keychain access is limited to what this app’s entitlements allow.
 
 ## Troubleshooting
 
