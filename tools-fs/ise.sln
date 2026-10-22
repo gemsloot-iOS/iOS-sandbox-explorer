@@ -1,9 +1,8 @@
-﻿
-Microsoft Visual Studio Solution File, Format Version 12.00
+﻿Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "IosSandboxExplorer.Tools", "IosSandboxExplorer.Tools\IosSandboxExplorer.Tools.fsproj", "{BF5D04B2-54B0-4979-BB64-50671FDB3A5F}"
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "ise", "ise\ise.fsproj", "{BF5D04B2-54B0-4979-BB64-50671FDB3A5F}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
