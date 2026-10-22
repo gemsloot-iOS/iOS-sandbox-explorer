@@ -9,7 +9,13 @@
 
   <ItemGroup>
     <Compile Include="Client.fs" />
+    <Compile Include="MachO.fs" />
+    <Compile Include="Patcher.fs" />
     <Compile Include="Program.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="plist-cil" Version="2.2.0" />
   </ItemGroup>
 
 </Project>

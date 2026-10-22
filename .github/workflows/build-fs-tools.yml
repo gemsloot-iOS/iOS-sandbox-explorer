@@ -41,3 +41,9 @@ jobs:
           dotnet run
           --project tools-fs/IosSandboxExplorer.Tools/IosSandboxExplorer.Tools.fsproj
           -c Release --no-build -- --self-test
+
+      - name: Smoke run patcher self-test
+        run: >
+          dotnet run
+          --project tools-fs/IosSandboxExplorer.Tools/IosSandboxExplorer.Tools.fsproj
+          -c Release --no-build -- --self-test-patcher
