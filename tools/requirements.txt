@@ -1,5 +1,0 @@
-# Core — IPA binary patching (cross-platform, no native deps)
-lief>=0.14.0
-
-# Optional — device management via pymobiledevice3
-# pymobiledevice3>=2.0.0

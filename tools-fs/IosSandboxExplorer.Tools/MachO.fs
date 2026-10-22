@@ -1,4 +1,6 @@
-// Manual LC_LOAD_DYLIB injection (port of tools/patcher.py MachOInjector, no lief).
+// Manual LC_LOAD_DYLIB injection (port of tools/patcher.py MachOInjector).
+// When header padding is insufficient, reclaim space by stripping LC_CODE_SIGNATURE
+// (insert_dylib / lief-class quality for the common signed-binary case — no Python lief).
 
 module IosSandboxExplorer.MachO
 
@@ -8,6 +10,7 @@ open System.Text
 
 let private LC_LOAD_DYLIB = 0x0Cu
 let private LC_LOAD_WEAK_DYLIB = 0x18u
+let private LC_CODE_SIGNATURE = 0x1Du
 let private MH_MAGIC_64 = 0xFEEDFACFu
 let private MH_CIGAM_64 = 0xCFFAEDFEu
 let private MH_MAGIC_32 = 0xFEEDFACEu
@@ -34,6 +37,64 @@ let private findCString (data: byte[]) (start: int) =
         endIdx <- endIdx + 1
     Encoding.UTF8.GetString(data, start, endIdx - start)
 
+/// Remove LC_CODE_SIGNATURE from a thin slice to free load-command padding. Returns bytes reclaimed.
+let private stripCodeSignature (data: byte[]) (baseOffset: int) (hdr: int) : int =
+    let ncmds = int (readUInt32LE data (baseOffset + 16))
+    let sizeofcmds = int (readUInt32LE data (baseOffset + 20))
+    let cmdsStart = baseOffset + hdr
+    let mutable off = cmdsStart
+    let mutable foundAt = -1
+    let mutable foundSize = 0
+    for _ in 1..ncmds do
+        if off + 8 > data.Length then ()
+        else
+            let cmd = readUInt32LE data off
+            let cmdsize = int (readUInt32LE data (off + 4))
+            if foundAt < 0 && cmd = LC_CODE_SIGNATURE && cmdsize > 0 then
+                foundAt <- off
+                foundSize <- cmdsize
+            if cmdsize > 0 then
+                off <- off + cmdsize
+
+    if foundAt < 0 || foundSize <= 0 then 0
+    else
+        let cmdsEnd = cmdsStart + sizeofcmds
+        let after = foundAt + foundSize
+        let tailLen = cmdsEnd - after
+        if tailLen > 0 then
+            Array.Copy(data, after, data, foundAt, tailLen)
+        // Zero the vacated tail of the command region (becomes padding).
+        Array.Clear(data, foundAt + tailLen, foundSize)
+        writeUInt32LE data (baseOffset + 16) (uint32 (ncmds - 1))
+        writeUInt32LE data (baseOffset + 20) (uint32 (sizeofcmds - foundSize))
+        printfn "[*] Stripped LC_CODE_SIGNATURE (%d bytes) to free inject space" foundSize
+        foundSize
+
+let private buildLoadDylibCommand (dylibInstallName: string) : byte[] =
+    let nameBytes = Encoding.UTF8.GetBytes(dylibInstallName + "\u0000")
+    use ms = new MemoryStream()
+    use bw = new BinaryWriter(ms)
+    bw.Write(LC_LOAD_DYLIB)
+    bw.Write(0u) // placeholder cmdsize
+    bw.Write(24u) // name offset from start of command
+    bw.Write(2u) // timestamp
+    bw.Write(0x00010000u) // current_version 1.0.0
+    bw.Write(0x00010000u) // compat_version 1.0.0
+    bw.Write(nameBytes)
+    while ms.Length % 8L <> 0L do
+        bw.Write(0uy)
+    let cmdBody = ms.ToArray()
+    writeUInt32LE cmdBody 4 (uint32 cmdBody.Length)
+    cmdBody
+
+let private availablePadding (data: byte[]) (cmdsEnd: int) (needed: int) =
+    let mutable available = 0
+    let mutable check = cmdsEnd
+    while check < data.Length && data.[check] = 0uy && available < needed do
+        available <- available + 1
+        check <- check + 1
+    available
+
 /// Inject into a thin Mach-O slice starting at baseOffset. Mutates data in place.
 let injectThin (data: byte[]) (baseOffset: int) (dylibInstallName: string) : bool =
     let magic = readUInt32LE data baseOffset
@@ -47,13 +108,12 @@ let injectThin (data: byte[]) (baseOffset: int) (dylibInstallName: string) : boo
         printfn "[!] Unknown Mach-O magic: 0x%X" magic
         false
     | Some hdr ->
-        let ncmds = int (readUInt32LE data (baseOffset + 16))
-        let sizeofcmds = int (readUInt32LE data (baseOffset + 20))
+        let ncmds0 = int (readUInt32LE data (baseOffset + 16))
 
-        // Walk existing load commands
+        // Walk existing load commands for idempotent re-inject.
         let mutable cmdOffset = baseOffset + hdr
         let mutable alreadyInjected = false
-        for _ in 1..ncmds do
+        for _ in 1..ncmds0 do
             if not alreadyInjected && cmdOffset + 8 <= data.Length then
                 let cmd = readUInt32LE data cmdOffset
                 let cmdsize = int (readUInt32LE data (cmdOffset + 4))
@@ -68,38 +128,34 @@ let injectThin (data: byte[]) (baseOffset: int) (dylibInstallName: string) : boo
 
         if alreadyInjected then true
         else
-            let nameBytes = Encoding.UTF8.GetBytes(dylibInstallName + "\u0000")
-            use ms = new MemoryStream()
-            use bw = new BinaryWriter(ms)
-            bw.Write(LC_LOAD_DYLIB)
-            bw.Write(0u) // placeholder cmdsize
-            bw.Write(24u) // name offset from start of command
-            bw.Write(2u) // timestamp
-            bw.Write(0x00010000u) // current_version 1.0.0
-            bw.Write(0x00010000u) // compat_version 1.0.0
-            bw.Write(nameBytes)
-            while ms.Length % 8L <> 0L do
-                bw.Write(0uy)
-            let cmdBody = ms.ToArray()
-            writeUInt32LE cmdBody 4 (uint32 cmdBody.Length)
+            let cmdBody = buildLoadDylibCommand dylibInstallName
             let newCmdsize = cmdBody.Length
 
-            let cmdsEnd = baseOffset + hdr + sizeofcmds
-            let mutable available = 0
-            let mutable check = cmdsEnd
-            while check < data.Length && data.[check] = 0uy && available < newCmdsize do
-                available <- available + 1
-                check <- check + 1
+            let tryWrite () =
+                let ncmds = int (readUInt32LE data (baseOffset + 16))
+                let sizeofcmds = int (readUInt32LE data (baseOffset + 20))
+                let cmdsEnd = baseOffset + hdr + sizeofcmds
+                let available = availablePadding data cmdsEnd newCmdsize
+                if available < newCmdsize then
+                    false
+                else
+                    Array.Copy(cmdBody, 0, data, cmdsEnd, newCmdsize)
+                    writeUInt32LE data (baseOffset + 16) (uint32 (ncmds + 1))
+                    writeUInt32LE data (baseOffset + 20) (uint32 (sizeofcmds + newCmdsize))
+                    printfn "[+] Injected LC_LOAD_DYLIB: %s" dylibInstallName
+                    true
 
-            if available < newCmdsize then
-                printfn "[!] Not enough space for injection. Need %d bytes, have %d" newCmdsize available
-                false
+            if tryWrite () then true
             else
-                Array.Copy(cmdBody, 0, data, cmdsEnd, newCmdsize)
-                writeUInt32LE data (baseOffset + 16) (uint32 (ncmds + 1))
-                writeUInt32LE data (baseOffset + 20) (uint32 (sizeofcmds + newCmdsize))
-                printfn "[+] Injected LC_LOAD_DYLIB: %s" dylibInstallName
-                true
+                // lief / insert_dylib class: reclaim codesig command space, then retry once.
+                let reclaimed = stripCodeSignature data baseOffset hdr
+                if reclaimed > 0 && tryWrite () then true
+                else
+                    let sizeofcmds = int (readUInt32LE data (baseOffset + 20))
+                    let cmdsEnd = baseOffset + hdr + sizeofcmds
+                    let available = availablePadding data cmdsEnd newCmdsize
+                    printfn "[!] Not enough space for injection. Need %d bytes, have %d" newCmdsize available
+                    false
 
 let private injectFat (data: byte[]) (dylibInstallName: string) : bool =
     let magic = readUInt32BE data 0
@@ -145,6 +201,28 @@ let createMinimalExecutableWithPadding (padding: int) : byte[] =
     writeUInt32LE data 20 0u // sizeofcmds
     writeUInt32LE data 24 0u
     writeUInt32LE data 28 0u
+    data
+
+/// Minimal executable whose only load command is an oversized LC_CODE_SIGNATURE and no free
+/// padding after sizeofcmds — used to verify codesig reclaim unlocks inject space.
+let createMinimalExecutableWithOnlyCodeSignature () : byte[] =
+    let headerSize = 32
+    // Real LC_CODE_SIGNATURE cmds are 16 bytes; use a larger cmdsize so reclaim frees
+    // enough room for a typical LC_LOAD_DYLIB path (self-test of the reclaim path).
+    let sigCmdSize = 128
+    let data = Array.zeroCreate (headerSize + sigCmdSize)
+    writeUInt32LE data 0 MH_MAGIC_64
+    writeUInt32LE data 4 0x0100000cu
+    writeUInt32LE data 8 0u
+    writeUInt32LE data 12 2u
+    writeUInt32LE data 16 1u // ncmds
+    writeUInt32LE data 20 (uint32 sigCmdSize) // sizeofcmds
+    writeUInt32LE data 24 0u
+    writeUInt32LE data 28 0u
+    writeUInt32LE data headerSize LC_CODE_SIGNATURE
+    writeUInt32LE data (headerSize + 4) (uint32 sigCmdSize)
+    writeUInt32LE data (headerSize + 8) 0u // dataoff
+    writeUInt32LE data (headerSize + 12) 0u // datasize
     data
 
 /// True if any LC_LOAD_DYLIB name contains the needle.
