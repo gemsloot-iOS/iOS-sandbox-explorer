@@ -1,0 +1,40 @@
+# Phase 6 scaffold: restore + build F# host tooling (no feature ports yet).
+
+name: Build F# tools
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools-fs/**"
+      - ".github/workflows/build-fs-tools.yml"
+  pull_request:
+    paths:
+      - "tools-fs/**"
+      - ".github/workflows/build-fs-tools.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: dotnet build (net8.0)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore tools-fs/IosSandboxExplorer.Tools.sln
+
+      - name: Build
+        run: dotnet build tools-fs/IosSandboxExplorer.Tools.sln -c Release --no-restore
+
+      - name: Smoke run scaffold
+        run: dotnet run --project tools-fs/IosSandboxExplorer.Tools/IosSandboxExplorer.Tools.fsproj -c Release --no-build
