@@ -1,5 +1,5 @@
 // F# IPA patch/inject only (signing is external).
-// Python tools/patcher.py kept for install/devices/tunnel (no F# parity yet).
+// Device install/list/tunnel live in Device.fs (Netimobiledevice).
 
 module IosSandboxExplorer.Patcher
 
@@ -102,7 +102,7 @@ let patchIpa (ipaPath: string) (dylibPath: string) (outputPath: string) : Result
                     log "[*] Cleaned up temp files"
             with _ -> ()
 
-/// Offline self-test: Mach-O inject + synthetic IPA round-trip.
+/// Offline self-test: Mach-O inject + codesig reclaim + synthetic IPA round-trip.
 let selfTest () : int =
     let tmp = Path.Combine(Path.GetTempPath(), "ios-sandbox-patcher-selftest-" + Guid.NewGuid().ToString("N"))
     Directory.CreateDirectory(tmp) |> ignore
@@ -121,43 +121,52 @@ let selfTest () : int =
             eprintfn "self-test-patcher FAIL: re-inject (idempotent)"
             1
         else
-            let staging = Path.Combine(tmp, "stage")
-            let payload = Path.Combine(staging, "Payload", "Dummy.app")
-            Directory.CreateDirectory(payload) |> ignore
-            File.WriteAllBytes(Path.Combine(payload, "Dummy"), MachO.createMinimalExecutableWithPadding padding)
-            let info = NSDictionary()
-            info.Add("CFBundleExecutable", NSString("Dummy") :> NSObject)
-            info.Add("CFBundleIdentifier", NSString("com.example.dummy") :> NSObject)
-            PropertyListParser.SaveAsXml(info, FileInfo(Path.Combine(payload, "Info.plist")))
-            let dylibPath = Path.Combine(tmp, "libShell.dylib")
-            File.WriteAllBytes(dylibPath, [| 0xCAuy; 0xFEuy; 0xBAuy; 0xBEuy |])
-            let ipaPath = Path.Combine(tmp, "Dummy.ipa")
-            if File.Exists(ipaPath) then File.Delete(ipaPath)
-            ZipFile.CreateFromDirectory(
-                Path.Combine(staging, "Payload"),
-                ipaPath,
-                CompressionLevel.Optimal,
-                includeBaseDirectory = true
-            )
-            let outIpa = Path.Combine(tmp, "Dummy_patched.ipa")
-            match patchIpa ipaPath dylibPath outIpa with
-            | Error e ->
-                eprintfn "self-test-patcher FAIL: %s" e
+            let codesigPath = Path.Combine(tmp, "SignedDummy")
+            File.WriteAllBytes(codesigPath, MachO.createMinimalExecutableWithOnlyCodeSignature ())
+            if not (MachO.inject codesigPath install) then
+                eprintfn "self-test-patcher FAIL: codesig reclaim inject"
                 1
-            | Ok r ->
-                let extract = Path.Combine(tmp, "out")
-                Directory.CreateDirectory(extract) |> ignore
-                ZipFile.ExtractToDirectory(outIpa, extract)
-                let fw = Path.Combine(extract, "Payload", r.AppBundleName, "Frameworks", "libShell.dylib")
-                let bin = Path.Combine(extract, "Payload", r.AppBundleName, r.ExecutableName)
-                if not (File.Exists(fw)) then
-                    eprintfn "self-test-patcher FAIL: dylib missing in Frameworks"
+            elif not (MachO.containsLoadDylib (File.ReadAllBytes(codesigPath)) "libShell.dylib") then
+                eprintfn "self-test-patcher FAIL: codesig reclaim missing LC_LOAD_DYLIB"
+                1
+            else
+                let staging = Path.Combine(tmp, "stage")
+                let payload = Path.Combine(staging, "Payload", "Dummy.app")
+                Directory.CreateDirectory(payload) |> ignore
+                File.WriteAllBytes(Path.Combine(payload, "Dummy"), MachO.createMinimalExecutableWithPadding padding)
+                let info = NSDictionary()
+                info.Add("CFBundleExecutable", NSString("Dummy") :> NSObject)
+                info.Add("CFBundleIdentifier", NSString("com.example.dummy") :> NSObject)
+                PropertyListParser.SaveAsXml(info, FileInfo(Path.Combine(payload, "Info.plist")))
+                let dylibPath = Path.Combine(tmp, "libShell.dylib")
+                File.WriteAllBytes(dylibPath, [| 0xCAuy; 0xFEuy; 0xBAuy; 0xBEuy |])
+                let ipaPath = Path.Combine(tmp, "Dummy.ipa")
+                if File.Exists(ipaPath) then File.Delete(ipaPath)
+                ZipFile.CreateFromDirectory(
+                    Path.Combine(staging, "Payload"),
+                    ipaPath,
+                    CompressionLevel.Optimal,
+                    includeBaseDirectory = true
+                )
+                let outIpa = Path.Combine(tmp, "Dummy_patched.ipa")
+                match patchIpa ipaPath dylibPath outIpa with
+                | Error e ->
+                    eprintfn "self-test-patcher FAIL: %s" e
                     1
-                elif not (MachO.containsLoadDylib (File.ReadAllBytes(bin)) "libShell.dylib") then
-                    eprintfn "self-test-patcher FAIL: patched binary missing LC_LOAD_DYLIB"
-                    1
-                else
-                    printfn "self-test-patcher OK: Mach-O inject + IPA round-trip"
-                    0
+                | Ok r ->
+                    let extract = Path.Combine(tmp, "out")
+                    Directory.CreateDirectory(extract) |> ignore
+                    ZipFile.ExtractToDirectory(outIpa, extract)
+                    let fw = Path.Combine(extract, "Payload", r.AppBundleName, "Frameworks", "libShell.dylib")
+                    let bin = Path.Combine(extract, "Payload", r.AppBundleName, r.ExecutableName)
+                    if not (File.Exists(fw)) then
+                        eprintfn "self-test-patcher FAIL: dylib missing in Frameworks"
+                        1
+                    elif not (MachO.containsLoadDylib (File.ReadAllBytes(bin)) "libShell.dylib") then
+                        eprintfn "self-test-patcher FAIL: patched binary missing LC_LOAD_DYLIB"
+                        1
+                    else
+                        printfn "self-test-patcher OK: Mach-O inject + codesig reclaim + IPA round-trip"
+                        0
     finally
         try Directory.Delete(tmp, true) with _ -> ()
