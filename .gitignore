@@ -25,6 +25,7 @@ build/
 DerivedData/
 *.dSYM/
 *.dSYM.zip
+libShell.dylib
 
 # Temporary files
 *.tmp

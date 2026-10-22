@@ -82,11 +82,20 @@ Apple requires "anisette" device-attestation headers for signing. This tool hand
 
 ## Building the DYLIB
 
+`libShell.dylib` is **not** committed to this repository. Obtain it by building on macOS, or download a release/CI artifact.
+
+### macOS (build from source)
+
 ```bash
 make
 ```
 
-Creates `libShell.dylib` in the project root. On macOS, also builds `tools/anisette_helper` (the native anisette binary, compiled automatically on demand). You only need macOS for this step — use the pre-built binary from Releases on other platforms.
+Creates `libShell.dylib` in the project root. Also builds `tools/anisette_helper` (native anisette binary) when that target is requested.
+
+### Other platforms (pre-built)
+
+- **GitHub Releases** — download `libShell.dylib` from the latest [Release](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/releases) (published when a semver tag such as `v0.0.1` is pushed).
+- **CI artifacts** — download the `libShell-dylib` artifact from a green [Actions](https://github.com/gemsloot-iOS/iOS-sandbox-explorer/actions) run of **Build libShell.dylib**.
 
 ## Patching an IPA
 
