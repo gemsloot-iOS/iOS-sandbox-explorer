@@ -1,18 +1,24 @@
-# iOS Sandbox Explorer
+# Overview and Workflow of the iOS Sandbox Explorer
 
-Inject a custom dylib into any iOS app IPA, **sign with an external tool**, install it, and get an interactive shell into that app’s sandbox over USB.
+The iOS Sandbox Explorer lets you create a custom DYLIB, inject it into any iOS app, and interact with the app's sandbox through a simple workflow. 
 
-This is a **jailed / sideload** workflow: `libShell.dylib` is loaded via `LC_LOAD_DYLIB` (constructor inject). There is **no** Theos tweak, **no** Cydia Substrate, and **no** Ellekit in this repository.
+Once created, the resulting IPA can be signed using an external signer and installed onto your device. There are many ways to sign your IPA for free without requiring a Mac or being jailbroken; some examples include Feather, Ipasigner.com, Sideloadly, and Zsign. After installing the app onto your device, you will have access to an interactive shell within the app's sandbox over a USB connection.
 
-Host Apple ID / GSA / anisette / Developer Portal signing is **not** part of this project. Sign with feather, [ipasigner](https://ipasigner.com), Sideloadly, zsign, or any other external signer.
+This project does not provide support for Apple ID/GSA/anisette signing so you must use your own preferred method of signing.
 
-## How it works
+## Workflow
 
-1. **Build** `libShell.dylib` — Objective-C TCP server with built-in sandbox-safe commands (no `popen`, no `exec`)
-2. **Patch** an IPA with the F# tools — inject the dylib, ATS plist tweak, write sample entitlements, repack (**unsigned**)
-3. **Sign** the patched IPA externally
-4. **Install** (F# `install` via Netimobiledevice, or your signer’s install flow)
-5. **Tunnel** USB → localhost and run shell commands / SCP / keychain dump
+The general workflow is as follows:
+
+1. Create libShell.dylib - A TCP server written in Objective-C that includes many built-in commands that are safe to run within the sandbox (i.e., no popen/no exec).
+
+2. Inject the DYLIB into any IPA, add network entitlements, update Info.plist, and produce a patched IPA ready to be signed.
+
+3. Sign the patched IPA using an external tool of your choice.
+
+4. Install the patched IPA onto your device (e.g., using ideviceinstaller or through your signer's installation process).
+
+5. Connect to the device via USB tunnel and execute commands (e.g., ls/cat), dump the keychain, or download files directly from the app's sandbox.
 
 ## Repository layout
 
